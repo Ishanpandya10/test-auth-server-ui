@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>SMVS BFF Flow Tester</title>
+  <style>
+    body { font-family: Segoe UI, Arial, sans-serif; max-width: 900px; margin: 24px auto; padding: 0 16px; color: #1a2b4a; }
+    h1 { font-size: 20px; }
+    h2 { font-size: 15px; margin-top: 28px; }
+    label { display: block; font-size: 13px; margin: 10px 0 4px; font-weight: 600; }
+    input { width: 100%; padding: 8px; font-size: 13px; box-sizing: border-box; border: 1px solid #bbb; border-radius: 4px; }
+    .row { display: flex; gap: 12px; }
+    .row > div { flex: 1; }
+    button { margin: 10px 8px 0 0; padding: 9px 16px; font-size: 13px; border: 0; border-radius: 4px; background: #1155cc; color: #fff; cursor: pointer; }
+    button.secondary { background: #4a5568; }
+    button:hover { opacity: .9; }
+    pre { background: #0f172a; color: #e2e8f0; padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+    .ok { color: #16a34a; font-weight: 600; }
+    .err { color: #dc2626; font-weight: 600; }
+    .hint { font-size: 12px; color: #555; background: #f1f5f9; padding: 10px 12px; border-radius: 6px; }
+    .step { border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 16px; margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <h1>SMVS BFF Flow Tester</h1>
+  <p class="hint">
+    Tests the full browser flow: <b>POST /app/session</b> (exchange legacy
+    auth_token → JWT, set SESSION cookie), then secured pings to
+    <b>account-management</b> and <b>spk-management</b> through the gateway.
+    Every call uses <code>credentials: "include"</code>, so this exercises the real
+    CORS + cookie path. Serve this file over the <b>same scheme</b> you use for the
+    gateway (HTTPS in UAT/PROD; the SESSION cookie is <code>Secure</code> and will be
+    dropped over plain HTTP).
+  </p>
+
+  <div class="step">
+    <h2>Configuration</h2>
+    <label>Gateway base URL</label>
+    <input id="gateway" value="http://localhost:8082"/>
+    <div class="row">
+      <div>
+        <label>Legacy auth_token</label>
+        <input id="authToken" placeholder="AES(user)-UUID...timestamp"/>
+      </div>
+      <div>
+        <label>env</label>
+        <input id="env" value="UAT"/>
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <h2>Step 1 — Bootstrap BFF session</h2>
+    <button onclick="bootstrap()">POST /app/session</button>
+    <span id="s1status"></span>
+    <pre id="s1out">—</pre>
+  </div>
+
+  <div class="step">
+    <h2>Step 2 — Call services through the gateway (cookie only)</h2>
+    <button onclick="ping('account-management')">GET /app/account-management/secure/ping</button>
+    <button onclick="ping('spk-management')">GET /app/spk-management/secure/ping</button>
+    <button class="secondary" onclick="pingPublic('account-management')">public /ping (account)</button>
+    <button class="secondary" onclick="pingPublic('spk-management')">public /ping (spk)</button>
+    <pre id="s2out">—</pre>
+  </div>
+
+  <div class="hint">
+    <b>Reading results:</b> Step 1 should be <code>204</code>. Step 2 secure pings
+    should be <code>200</code> with your identity. A browser <b>CORS failure</b>
+    shows as a <code>TypeError: Failed to fetch</code> (status "network/CORS") — the
+    most common cause is the gateway not returning your exact origin with
+    <code>Access-Control-Allow-Credentials: true</code>. A <code>401</code> on step 2
+    means no/expired session — re-run step 1.
+  </div>
+
+  <script>
+    const gw = () => document.getElementById('gateway').value.replace(/\/+$/, '');
+
+    function show(elId, label, result) {
+      const el = document.getElementById(elId);
+      el.textContent = label + '\n' + result;
+    }
+
+    function statusClass(ok) { return ok ? 'ok' : 'err'; }
+
+    async function bootstrap() {
+      const authToken = document.getElementById('authToken').value.trim();
+      const env = document.getElementById('env').value.trim();
+      const st = document.getElementById('s1status');
+      if (!authToken) { st.innerHTML = '<span class="err">enter an auth_token first</span>'; return; }
+      try {
+        const res = await fetch(gw() + '/app/session', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ authToken, env })
+        });
+        const text = await res.text();
+        st.innerHTML = `<span class="${statusClass(res.ok)}">HTTP ${res.status}</span>`;
+        show('s1out', `POST /app/session → ${res.status} ${res.statusText}`,
+             text || '(empty body — 204 expected on success)');
+      } catch (e) {
+        st.innerHTML = '<span class="err">network/CORS failure</span>';
+        show('s1out', 'POST /app/session → FAILED (likely CORS or mixed HTTP/HTTPS)', String(e));
+      }
+    }
+
+    async function ping(service) {
+      await call('GET /app/' + service + '/secure/ping', gw() + '/app/' + service + '/secure/ping');
+    }
+
+    // Public ping path differs: account-management has no context path (/ping);
+    // spk-management is served under its context path (/spk-management/ping),
+    // but through the gateway both are reached under /app/<service>/...
+    async function pingPublic(service) {
+      const path = service === 'spk-management'
+        ? '/app/spk-management/ping'
+        : '/app/account-management/ping';
+      await call('GET ' + path + ' (public)', gw() + path);
+    }
+
+    async function call(label, url) {
+      try {
+        const res = await fetch(url, { method: 'GET', credentials: 'include' });
+        const text = await res.text();
+        show('s2out', `${label} → ${res.status} ${res.statusText}`, text);
+        document.getElementById('s2out').className = '';
+      } catch (e) {
+        show('s2out', `${label} → FAILED (likely CORS or mixed HTTP/HTTPS)`, String(e));
+      }
+    }
+  </script>
+</body>
+</html>
