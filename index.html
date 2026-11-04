@@ -27,7 +27,8 @@
   <p class="hint">
     Tests the full browser flow: <b>POST /app/session</b> (exchange legacy
     auth_token → JWT, set SESSION cookie), then secured pings to
-    <b>account-management</b> and <b>spk-management</b> through the gateway.
+    <b>account-management</b> and <b>spk-management</b> through the gateway, then
+    <b>POST /app/logout</b> to confirm the session stops working.
     Every call uses <code>credentials: "include"</code>, so this exercises the real
     CORS + cookie path. Serve this file over the <b>same scheme</b> you use for the
     gateway (HTTPS in UAT/PROD; the SESSION cookie is <code>Secure</code> and will be
@@ -64,6 +65,18 @@
     <button class="secondary" onclick="pingPublic('account-management')">public /ping (account)</button>
     <button class="secondary" onclick="pingPublic('spk-management')">public /ping (spk)</button>
     <pre id="s2out">—</pre>
+  </div>
+
+  <div class="step">
+    <h2>Step 3 — Logout (invalidate BFF session)</h2>
+    <button onclick="logout()">POST /app/logout</button>
+    <span id="s3status"></span>
+    <pre id="s3out">—</pre>
+    <p class="hint">
+      Expect <code>204</code>. Then re-run the Step 2 secure pings: they must return
+      <code>401</code>, proving the logged-out SESSION cookie can no longer reach any
+      service. Run Step 1 again to start a new session.
+    </p>
   </div>
 
   <div class="hint">
@@ -104,6 +117,20 @@
       } catch (e) {
         st.innerHTML = '<span class="err">network/CORS failure</span>';
         show('s1out', 'POST /app/session → FAILED (likely CORS or mixed HTTP/HTTPS)', String(e));
+      }
+    }
+
+    async function logout() {
+      const st = document.getElementById('s3status');
+      try {
+        const res = await fetch(gw() + '/app/logout', { method: 'POST', credentials: 'include' });
+        st.innerHTML = `<span class="${statusClass(res.status === 204)}">HTTP ${res.status}</span>`;
+        show('s3out', `POST /app/logout → ${res.status} ${res.statusText}`,
+             res.status === 204 ? 'Session invalidated. Re-run the Step 2 secure pings: expect 401.'
+                                : await res.text());
+      } catch (e) {
+        st.innerHTML = '<span class="err">network/CORS failure</span>';
+        show('s3out', 'POST /app/logout → FAILED (likely CORS or mixed HTTP/HTTPS)', String(e));
       }
     }
 
