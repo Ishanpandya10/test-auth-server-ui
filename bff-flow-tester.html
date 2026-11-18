@@ -9,7 +9,7 @@
     h1 { font-size: 20px; }
     h2 { font-size: 15px; margin-top: 28px; }
     label { display: block; font-size: 13px; margin: 10px 0 4px; font-weight: 600; }
-    input { width: 100%; padding: 8px; font-size: 13px; box-sizing: border-box; border: 1px solid #bbb; border-radius: 4px; }
+    input, select { width: 100%; padding: 8px; font-size: 13px; box-sizing: border-box; border: 1px solid #bbb; border-radius: 4px; }
     .row { display: flex; gap: 12px; }
     .row > div { flex: 1; }
     button { margin: 10px 8px 0 0; padding: 9px 16px; font-size: 13px; border: 0; border-radius: 4px; background: #1155cc; color: #fff; cursor: pointer; }
@@ -38,7 +38,11 @@
   <div class="step">
     <h2>Configuration</h2>
     <label>Gateway base URL</label>
-    <input id="gateway" value="http://localhost:8082"/>
+    <select id="gateway" onchange="syncEnv()">
+      <option value="https://smvs-global-gateway.azurewebsites.net" data-env="UAT" selected>UAT - https://smvs-global-gateway.azurewebsites.net</option>
+      <option value="https://smvs-prod-global-gateway-hug0aygebtbrepfb.eastus-01.azurewebsites.net" data-env="PROD">PROD - https://smvs-prod-global-gateway-hug0aygebtbrepfb.eastus-01.azurewebsites.net</option>
+      <option value="http://localhost:8082" data-env="DEV">Local - http://localhost:8082</option>
+    </select>
     <div class="row">
       <div>
         <label>Legacy auth_token</label>
@@ -90,6 +94,12 @@
 
   <script>
     const gw = () => document.getElementById('gateway').value.replace(/\/+$/, '');
+
+    // Keep env in step with the selected gateway (env must match the environment the auth_token was issued in).
+    function syncEnv() {
+      const sel = document.getElementById('gateway');
+      document.getElementById('env').value = sel.options[sel.selectedIndex].dataset.env;
+    }
 
     function show(elId, label, result) {
       const el = document.getElementById(elId);
